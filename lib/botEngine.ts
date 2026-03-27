@@ -137,7 +137,7 @@ export async function startRun(config: BotConfig): Promise<BotState> {
 
   schedulePhase(targetTs, async () => {
     state.status = 'burst';
-    const burst = Math.max(3, Math.min(config.burstCount || 5, 5));
+    const burst = Math.max(3, Math.min(config.burstCount || 10, 20));
     const writes = Array.from({ length: burst }, (_unused, i) => {
       const uniqueValue = buildUniqueBurstValue(config.value, state.id, i + 1);
       return attemptWrite(spreadsheetId, config.range, uniqueValue, 1);
@@ -166,9 +166,9 @@ export async function runBurstNow(config: BotConfig): Promise<BotState> {
 
   try {
     const targetTs = computeTargetTimestampWIB(targetDate, config.targetTime);
-    const windowStart = targetTs - 50_000; // 50 detik sebelum
+    const windowStart = targetTs - 10_000; // 50 detik sebelum
     const windowEnd = targetTs + 20_000; // 20 detik setelah
-    const maxIterations = Number(process.env.BURST_MAX_ITERATIONS || '1500');
+    const maxIterations = Number(process.env.BURST_MAX_ITERATIONS || '5000');
     const burstConcurrency = Math.max(1, Number(process.env.BURST_CONCURRENCY || '6'));
     const targetRate = Math.max(1, Number(process.env.BURST_TARGET_RATE || '10')); // launches per second
     const minInterval = Math.floor(1000 / targetRate);
@@ -187,22 +187,8 @@ export async function runBurstNow(config: BotConfig): Promise<BotState> {
     state.status = 'burst';
     let iterations = 0;
     const inFlight: Promise<void>[] = [];
-    let lastLaunch = 0;
-    while (Date.now() <= windowEnd && iterations < maxIterations) {
-      if (inFlight.length >= burstConcurrency) {
-        await Promise.race(inFlight);
-        continue;
-      }
-
-      const sinceLast = Date.now() - lastLaunch;
-      if (sinceLast < minInterval) {
-        await wait(minInterval - sinceLast);
-        continue;
-      }
-
-      iterations += 1;
-      lastLaunch = Date.now();
-      const uniqueValue = buildUniqueBurstValue(config.value, state.id, iterations);
+    const launchWrite = (sequence: number) => {
+      const uniqueValue = buildUniqueBurstValue(config.value, state.id, sequence);
       const p = attemptWrite(spreadsheetId, config.range, uniqueValue, 1)
         .then((entry) => {
           state.logs.push(entry);
@@ -214,8 +200,32 @@ export async function runBurstNow(config: BotConfig): Promise<BotState> {
           const idx = inFlight.indexOf(p);
           if (idx !== -1) inFlight.splice(idx, 1);
         });
-
       inFlight.push(p);
+    };
+
+    // Pace launches based on elapsed time in the burst window so throughput stays consistent.
+    while (Date.now() <= windowEnd && iterations < maxIterations) {
+      const nowTs = Date.now();
+      const elapsed = Math.max(nowTs - windowStart, 0);
+      const expectedByNow = Math.min(maxIterations, Math.floor(elapsed / minInterval) + 1);
+
+      while (iterations < expectedByNow && inFlight.length < burstConcurrency) {
+        iterations += 1;
+        launchWrite(iterations);
+      }
+
+      if (Date.now() > windowEnd || iterations >= maxIterations) {
+        break;
+      }
+
+      if (inFlight.length >= burstConcurrency) {
+        await Promise.race(inFlight);
+        continue;
+      }
+
+      const nextExpectedTs = windowStart + (iterations + 1) * minInterval;
+      const sleepMs = Math.max(Math.min(nextExpectedTs - Date.now(), 50), 1);
+      await wait(sleepMs);
     }
 
     await Promise.allSettled(inFlight);
