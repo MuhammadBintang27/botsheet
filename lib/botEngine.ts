@@ -143,17 +143,34 @@ export async function runBurstNow(config: BotConfig): Promise<BotState> {
   };
 
   try {
+    const targetTs = computeTargetTimestampWIB(targetDate, config.targetTime);
+    const windowStart = targetTs - 60_000; // 1 menit sebelum
+    const windowEnd = targetTs + 30_000; // 30 detik setelah
+
     state.status = 'prewarm';
     state.logs.push(await warmAuth());
 
     state.status = 'warm';
     state.logs.push(await pingSheet(spreadsheetId));
 
+    const now = Date.now();
+    if (now < windowStart) {
+      await wait(windowStart - now);
+    }
+
     state.status = 'burst';
-    const burst = Math.max(3, Math.min(config.burstCount || 5, 5));
-    const writes = Array.from({ length: burst }, () => attemptWrite(spreadsheetId, config.range, config.value, 1));
-    const results = await Promise.all(writes);
-    results.forEach((r) => state.logs.push(r));
+    let iterations = 0;
+    const maxIterations = 300; // safety cap (~90s / 300ms)
+    while (Date.now() <= windowEnd && iterations < maxIterations) {
+      try {
+        const entry = await attemptWrite(spreadsheetId, config.range, config.value, 1);
+        state.logs.push(entry);
+      } catch (err) {
+        state.logs.push(logEntry('error', (err as Error).message));
+      }
+      iterations += 1;
+      await wait(300); // 0.3s antara percobaan
+    }
 
     state.status = 'success';
     state.logs.push(logEntry('info', 'Burst completed'));
