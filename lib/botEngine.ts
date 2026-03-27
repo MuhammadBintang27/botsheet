@@ -11,7 +11,7 @@ const globalRuns = (globalThis as any).__BOT_RUNS as Map<string, BotState> | und
 const runs: Map<string, BotState> = globalRuns || new Map();
 (globalThis as any).__BOT_RUNS = runs;
 
-function computeTargetTimestampWIB(targetDate: string, targetTime: string): number {
+export function computeTargetTimestampWIB(targetDate: string, targetTime: string): number {
   const [h, m, s] = targetTime.split(':').map(Number);
   if ([h, m, s].some((n) => Number.isNaN(n))) {
     throw new Error('Invalid targetTime format, use HH:mm:ss');
@@ -59,7 +59,7 @@ export function listRuns(): BotState[] {
   return Array.from(runs.values());
 }
 
-export async function startRun(config: BotConfig): Promise<BotState> {
+function validateConfig(config: BotConfig): { spreadsheetId: string; targetDate: string } {
   if (!config.sheetUrl || !config.range || !config.targetTime) {
     throw new Error('Missing required fields');
   }
@@ -71,6 +71,11 @@ export async function startRun(config: BotConfig): Promise<BotState> {
   if (!spreadsheetId) {
     throw new Error('Cannot extract spreadsheetId from URL');
   }
+  return { spreadsheetId, targetDate };
+}
+
+export async function startRun(config: BotConfig): Promise<BotState> {
+  const { spreadsheetId, targetDate } = validateConfig(config);
 
   const id = crypto.randomUUID();
   const state: BotState = {
@@ -120,6 +125,43 @@ export async function startRun(config: BotConfig): Promise<BotState> {
     state.status = 'success';
     state.logs.push(logEntry('info', 'Burst completed'));
   });
+
+  return state;
+}
+
+export async function runBurstNow(config: BotConfig): Promise<BotState> {
+  const { spreadsheetId, targetDate } = validateConfig(config);
+  const id = crypto.randomUUID();
+  const state: BotState = {
+    id,
+    status: 'scheduled',
+    logs: [logEntry('info', 'Run scheduled (QStash immediate)')],
+    startedAt: nowIso(),
+    targetDate,
+    targetTime: config.targetTime,
+    config: { ...config, targetDate }
+  };
+
+  try {
+    state.status = 'prewarm';
+    state.logs.push(await warmAuth());
+
+    state.status = 'warm';
+    state.logs.push(await pingSheet(spreadsheetId));
+
+    state.status = 'burst';
+    const burst = Math.max(3, Math.min(config.burstCount || 5, 5));
+    const writes = Array.from({ length: burst }, () => attemptWrite(spreadsheetId, config.range, config.value, 1));
+    const results = await Promise.all(writes);
+    results.forEach((r) => state.logs.push(r));
+
+    state.status = 'success';
+    state.logs.push(logEntry('info', 'Burst completed'));
+  } catch (error) {
+    state.status = 'failed';
+    state.error = (error as Error).message;
+    state.logs.push(logEntry('error', state.error));
+  }
 
   return state;
 }

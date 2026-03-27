@@ -1,7 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
-import { useSearchParams } from 'next/navigation';
+import { useMemo, useState } from 'react';
 import { BotState, LogEntry } from '@/types/bot';
 
 interface FormState {
@@ -41,13 +40,10 @@ function isValidDate(date: string) {
 
 export default function HomePage() {
   const [form, setForm] = useState<FormState>(defaultForm);
-  const [runId, setRunId] = useState<string | null>(null);
   const [botState, setBotState] = useState<BotState | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [statusUrl, setStatusUrl] = useState<string | null>(null);
-  const [shareUrl, setShareUrl] = useState<string | null>(null);
-  const searchParams = useSearchParams();
+  const [scheduledInfo, setScheduledInfo] = useState<{ messageId: string; eta?: string } | null>(null);
 
   const statusTone = useMemo(() => {
     switch (botState?.status) {
@@ -65,34 +61,14 @@ export default function HomePage() {
     }
   }, [botState?.status]);
 
-  useEffect(() => {
-    // If page opened with ?id=..., resume that run
-    const paramId = searchParams.get('id');
-    if (paramId) {
-      setRunId(paramId);
-      setStatusUrl(`/api/bot/status/${paramId}`);
-      if (typeof window !== 'undefined') {
-        setShareUrl(`${window.location.origin}/?id=${paramId}`);
-      }
-    }
-  }, [searchParams]);
-
-  useEffect(() => {
-    if (!runId) return;
-    const interval = setInterval(async () => {
-      const res = await fetch(`/api/bot/status/${runId}`);
-      if (res.ok) {
-        const data: BotState = await res.json();
-        setBotState(data);
-        if (data.status === 'success' || data.status === 'failed') {
-          clearInterval(interval);
-        }
-      }
-    }, 1000);
-    return () => clearInterval(interval);
-  }, [runId]);
-
   const logs: LogEntry[] = botState?.logs || [];
+
+  function toNotBeforeSeconds(date: string, time: string): number | undefined {
+    const iso = `${date}T${time}.000+07:00`; // treat as WIB
+    const ts = Date.parse(iso);
+    if (Number.isNaN(ts)) return undefined;
+    return Math.floor(ts / 1000);
+  }
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -113,29 +89,30 @@ export default function HomePage() {
 
     setSubmitting(true);
     try {
-      const res = await fetch('/api/bot/start', {
+      const notBefore = toNotBeforeSeconds(form.targetDate, form.targetTime);
+      const res = await fetch('/api/bot/schedule', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(form)
+        body: JSON.stringify({ ...form, notBefore })
       });
       const data = await res.json();
       if (!res.ok) {
-        setError(data.error || 'Gagal memulai bot');
+        setError(data.error || 'Gagal menjadwalkan bot');
         return;
       }
-      setRunId(data.id);
-      setStatusUrl(data.statusUrl || `/api/bot/status/${data.id}`);
-      if (typeof window !== 'undefined') {
-        setShareUrl(`${window.location.origin}/?id=${data.id}`);
-      }
+
       setBotState({
-        id: data.id,
-        status: data.status,
-        logs: data.logs,
+        id: data.messageId,
+        status: 'scheduled',
+        logs: [],
         startedAt: new Date().toISOString(),
-        targetDate: data.targetDate ?? form.targetDate,
-        targetTime: data.targetTime,
+        targetDate: form.targetDate,
+        targetTime: form.targetTime,
         config: { ...form }
+      });
+      setScheduledInfo({
+        messageId: data.messageId,
+        eta: data.notBefore ? new Date(Number(data.notBefore) * 1000).toISOString() : undefined
       });
     } catch (err) {
       setError((err as Error).message);
@@ -237,57 +214,13 @@ export default function HomePage() {
             <div className="text-xs text-slate-500">Target: {botState.targetDate || form.targetDate} {botState.targetTime} WIB</div>
           )}
         </div>
-        {statusUrl && (
-          <div className="flex items-center gap-2 text-xs text-slate-600 bg-slate-50 border border-slate-200 rounded-lg px-3 py-2">
-            <span className="font-medium text-slate-700">Status URL:</span>
-            <a href={statusUrl} className="text-accent underline" target="_blank" rel="noreferrer">
-              {statusUrl}
-            </a>
-            <button
-              type="button"
-              onClick={() => navigator.clipboard?.writeText(statusUrl)}
-              className="ml-auto px-2 py-1 rounded bg-ink text-white text-[11px] hover:bg-black"
-            >
-              Copy
-            </button>
-          </div>
-        )}
-        {(statusUrl || shareUrl) && (
-          <div className="grid md:grid-cols-2 gap-2 text-xs text-slate-600">
-            {statusUrl && (
-              <div className="flex items-center gap-2 bg-slate-50 border border-slate-200 rounded-lg px-3 py-2">
-                <span className="font-medium text-slate-700">Status API:</span>
-                <a href={statusUrl} className="text-accent underline" target="_blank" rel="noreferrer">
-                  {statusUrl}
-                </a>
-                <button
-                  type="button"
-                  onClick={() => navigator.clipboard?.writeText(statusUrl)}
-                  className="ml-auto px-2 py-1 rounded bg-ink text-white text-[11px] hover:bg-black"
-                >
-                  Copy
-                </button>
-              </div>
-            )}
-            {shareUrl && (
-              <div className="flex items-center gap-2 bg-slate-50 border border-slate-200 rounded-lg px-3 py-2">
-                <span className="font-medium text-slate-700">Link Halaman:</span>
-                <a href={shareUrl} className="text-accent underline" target="_blank" rel="noreferrer">
-                  {shareUrl}
-                </a>
-                <button
-                  type="button"
-                  onClick={() => navigator.clipboard?.writeText(shareUrl)}
-                  className="ml-auto px-2 py-1 rounded bg-ink text-white text-[11px] hover:bg-black"
-                >
-                  Copy
-                </button>
-              </div>
-            )}
+        {scheduledInfo && (
+          <div className="text-sm text-slate-600">
+            Dijadwalkan via QStash (id: {scheduledInfo.messageId}){scheduledInfo.eta ? ` • ETA ${scheduledInfo.eta}` : ''}
           </div>
         )}
         <div className="space-y-2">
-          <div className="text-sm text-slate-600">Log realtime</div>
+          <div className="text-sm text-slate-600">Log (hanya muncul jika dijalankan langsung, QStash tidak menyimpan log di sini)</div>
           <div className="log-area h-60 overflow-auto rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-700">
             {logs.length === 0 && <div className="text-slate-400">Belum ada log.</div>}
             {logs.map((log, idx) => (

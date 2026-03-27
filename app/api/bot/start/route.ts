@@ -26,15 +26,12 @@ export async function POST(request: Request) {
 
     const state = await startRun(config);
 
-    const statusUrl = `/api/bot/status/${state.id}`;
-
     return NextResponse.json({
       id: state.id,
       status: state.status,
       logs: state.logs,
       targetDate: state.targetDate,
-      targetTime: state.targetTime,
-      statusUrl
+      targetTime: state.targetTime
     });
   } catch (error) {
     console.error('[bot/start] failed to start run', error);
