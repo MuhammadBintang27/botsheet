@@ -63,13 +63,6 @@ export default function HomePage() {
 
   const logs: LogEntry[] = botState?.logs || [];
 
-  function toNotBeforeSeconds(date: string, time: string): number | undefined {
-    const iso = `${date}T${time}.000+07:00`; // treat as WIB
-    const ts = Date.parse(iso);
-    if (Number.isNaN(ts)) return undefined;
-    return Math.floor(ts / 1000);
-  }
-
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     setError(null);
@@ -89,11 +82,10 @@ export default function HomePage() {
 
     setSubmitting(true);
     try {
-      const notBefore = toNotBeforeSeconds(form.targetDate, form.targetTime);
       const res = await fetch('/api/bot/schedule', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ...form, notBefore })
+        body: JSON.stringify({ ...form })
       });
       const data = await res.json();
       if (!res.ok) {

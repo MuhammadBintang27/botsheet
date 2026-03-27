@@ -1,9 +1,13 @@
 import { NextResponse } from 'next/server';
 import { Receiver } from '@upstash/qstash';
-import { runBurstNow } from '@/lib/botEngine';
+import { runBurstNow, computeTargetTimestampWIB } from '@/lib/botEngine';
 import { BotConfig } from '@/types/bot';
 
 export const runtime = 'nodejs';
+
+function sleep(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
 
 function getReceiver(): Receiver {
   const current = process.env.QSTASH_CURRENT_SIGNING_KEY;
@@ -42,6 +46,25 @@ export async function POST(request: Request) {
       targetTime: config.targetTime,
       burstCount: config.burstCount
     });
+
+    // Optional fine alignment: sleep until target timestamp (WIB) with cap.
+    if (config.targetDate && config.targetTime) {
+      try {
+        const targetTs = computeTargetTimestampWIB(config.targetDate, config.targetTime);
+        const now = Date.now();
+        const alignCap = Number(process.env.QSTASH_ALIGN_MAX_MS || '8000');
+        const delay = targetTs - now;
+        if (delay > 0) {
+          const waitMs = Math.min(delay, alignCap);
+          if (waitMs > 0) {
+            console.info(`[qstash/run] aligning to target, sleeping ${waitMs}ms (delay ${delay}ms)`);
+            await sleep(waitMs);
+          }
+        }
+      } catch (e) {
+        console.warn('[qstash/run] align skip due to error', e);
+      }
+    }
 
     const state = await runBurstNow(config);
 

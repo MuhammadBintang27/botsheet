@@ -31,7 +31,10 @@ function resolveCallback(): string {
 function toNotBeforeSeconds(notBefore?: string | number): number | undefined {
   if (notBefore === undefined) return undefined;
   if (typeof notBefore === 'number') {
-    return Math.floor(notBefore / 1000);
+    // Heuristic: if it's a large number, assume ms; if in seconds-range, keep as-is.
+    if (notBefore > 1e12) return Math.floor(notBefore / 1000); // ms -> s
+    if (notBefore > 1e9) return Math.floor(notBefore); // already seconds (near-future timestamps)
+    return undefined;
   }
   const ts = Date.parse(notBefore);
   if (Number.isNaN(ts)) return undefined;
