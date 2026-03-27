@@ -1,0 +1,22 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: light;
+}
+
+body {
+  font-family: theme('fontFamily.body');
+  background: radial-gradient(circle at 10% 20%, #f8fafc 0, #e2e8f0 35%, #f8fafc 70%);
+  color: #0f172a;
+  min-height: 100vh;
+}
+
+input, button, textarea, select {
+  font: inherit;
+}
+
+.log-area {
+  font-family: 'SFMono-Regular', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace;
+}
