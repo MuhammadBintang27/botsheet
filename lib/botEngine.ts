@@ -145,7 +145,11 @@ export async function runBurstNow(config: BotConfig): Promise<BotState> {
   try {
     const targetTs = computeTargetTimestampWIB(targetDate, config.targetTime);
     const windowStart = targetTs - 60_000; // 1 menit sebelum
-    const windowEnd = targetTs + 30_000; // 30 detik setelah
+    const windowEnd = targetTs + 5_000; // 5 detik setelah
+    const maxIterations = Number(process.env.BURST_MAX_ITERATIONS || '1000');
+    const burstConcurrency = Math.max(1, Number(process.env.BURST_CONCURRENCY || '8'));
+    const targetRate = Math.max(1, Number(process.env.BURST_TARGET_RATE || '5')); // launches per second
+    const minInterval = Math.floor(1000 / targetRate);
 
     state.status = 'prewarm';
     state.logs.push(await warmAuth());
@@ -160,17 +164,38 @@ export async function runBurstNow(config: BotConfig): Promise<BotState> {
 
     state.status = 'burst';
     let iterations = 0;
-    const maxIterations = 300; // safety cap (~90s / 300ms)
+    const inFlight: Promise<void>[] = [];
+    let lastLaunch = 0;
     while (Date.now() <= windowEnd && iterations < maxIterations) {
-      try {
-        const entry = await attemptWrite(spreadsheetId, config.range, config.value, 1);
-        state.logs.push(entry);
-      } catch (err) {
-        state.logs.push(logEntry('error', (err as Error).message));
+      if (inFlight.length >= burstConcurrency) {
+        await Promise.race(inFlight);
+        continue;
       }
+
+      const sinceLast = Date.now() - lastLaunch;
+      if (sinceLast < minInterval) {
+        await wait(minInterval - sinceLast);
+        continue;
+      }
+
       iterations += 1;
-      await wait(300); // 0.3s antara percobaan
+      lastLaunch = Date.now();
+      const p = attemptWrite(spreadsheetId, config.range, config.value, 1)
+        .then((entry) => {
+          state.logs.push(entry);
+        })
+        .catch((err) => {
+          state.logs.push(logEntry('error', (err as Error).message));
+        })
+        .finally(() => {
+          const idx = inFlight.indexOf(p);
+          if (idx !== -1) inFlight.splice(idx, 1);
+        });
+
+      inFlight.push(p);
     }
+
+    await Promise.allSettled(inFlight);
 
     state.status = 'success';
     state.logs.push(logEntry('info', 'Burst completed'));
