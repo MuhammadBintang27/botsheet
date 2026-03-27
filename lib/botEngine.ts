@@ -38,11 +38,23 @@ function wait(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+function toInvisibleSuffix(raw: string): string {
+  const bytes = Buffer.from(raw, 'utf8');
+  let bits = '';
+  for (const b of bytes) {
+    bits += b.toString(2).padStart(8, '0');
+  }
+  const encodedBits = bits.replace(/0/g, '\u200B').replace(/1/g, '\u200C');
+  return `\u2060${encodedBits}\u2060`;
+}
+
 function buildUniqueBurstValue(baseValue: string, runId: string, sequence: number): string {
   const runPart = runId.slice(0, 8);
   const timePart = Date.now().toString(36);
   const randPart = Math.random().toString(36).slice(2, 6);
-  return `${baseValue} | ${runPart}-${sequence}-${timePart}${randPart}`;
+  const uniqueToken = `${runPart}-${sequence}-${timePart}${randPart}`;
+  // Keep the visible text unchanged (e.g. "BOOKED") while appending invisible uniqueness.
+  return `${baseValue}${toInvisibleSuffix(uniqueToken)}`;
 }
 
 async function attemptWrite(spreadsheetId: string, range: string, value: string, attempt: number): Promise<LogEntry> {
