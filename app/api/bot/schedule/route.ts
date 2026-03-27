@@ -48,9 +48,10 @@ export async function POST(request: Request) {
     }
     const body = (await request.json()) as ScheduleBody;
     const callback = resolveCallback();
-    const notBefore = toNotBeforeSeconds(
-      body.notBefore ?? (body.targetDate && body.targetTime ? computeTargetTimestampWIB(body.targetDate, body.targetTime) : undefined)
-    );
+    const leadMs = Number(process.env.BURST_LEAD_MS || '60000');
+    const targetTs = body.targetDate && body.targetTime ? computeTargetTimestampWIB(body.targetDate, body.targetTime) : undefined;
+    const launchTs = body.notBefore ?? (targetTs !== undefined ? targetTs - leadMs : undefined);
+    const notBefore = toNotBeforeSeconds(launchTs);
 
     const publishResult = await client.publishJSON({
       url: callback,
