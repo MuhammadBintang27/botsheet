@@ -145,8 +145,8 @@ export async function runBurstNow(config: BotConfig): Promise<BotState> {
   try {
     const targetTs = computeTargetTimestampWIB(targetDate, config.targetTime);
     const windowStart = targetTs - 60_000; // 1 menit sebelum
-    const windowEnd = targetTs + 5_000; // 5 detik setelah
-    const maxIterations = Number(process.env.BURST_MAX_ITERATIONS || '1000');
+    const windowEnd = targetTs + 15_000; // 15 detik setelah
+    const maxIterations = Number(process.env.BURST_MAX_ITERATIONS || '5000');
     const burstConcurrency = Math.max(1, Number(process.env.BURST_CONCURRENCY || '8'));
     const targetRate = Math.max(1, Number(process.env.BURST_TARGET_RATE || '5')); // launches per second
     const minInterval = Math.floor(1000 / targetRate);
