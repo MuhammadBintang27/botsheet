@@ -38,6 +38,13 @@ function wait(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+function buildUniqueBurstValue(baseValue: string, runId: string, sequence: number): string {
+  const runPart = runId.slice(0, 8);
+  const timePart = Date.now().toString(36);
+  const randPart = Math.random().toString(36).slice(2, 6);
+  return `${baseValue} | ${runPart}-${sequence}-${timePart}${randPart}`;
+}
+
 async function attemptWrite(spreadsheetId: string, range: string, value: string, attempt: number): Promise<LogEntry> {
   try {
     return await writeRange(spreadsheetId, range, value);
@@ -119,7 +126,10 @@ export async function startRun(config: BotConfig): Promise<BotState> {
   schedulePhase(targetTs, async () => {
     state.status = 'burst';
     const burst = Math.max(3, Math.min(config.burstCount || 5, 5));
-    const writes = Array.from({ length: burst }, () => attemptWrite(spreadsheetId, config.range, config.value, 1));
+    const writes = Array.from({ length: burst }, (_unused, i) => {
+      const uniqueValue = buildUniqueBurstValue(config.value, state.id, i + 1);
+      return attemptWrite(spreadsheetId, config.range, uniqueValue, 1);
+    });
     const results = await Promise.all(writes);
     results.forEach((r) => state.logs.push(r));
     state.status = 'success';
@@ -180,7 +190,8 @@ export async function runBurstNow(config: BotConfig): Promise<BotState> {
 
       iterations += 1;
       lastLaunch = Date.now();
-      const p = attemptWrite(spreadsheetId, config.range, config.value, 1)
+      const uniqueValue = buildUniqueBurstValue(config.value, state.id, iterations);
+      const p = attemptWrite(spreadsheetId, config.range, uniqueValue, 1)
         .then((entry) => {
           state.logs.push(entry);
         })
